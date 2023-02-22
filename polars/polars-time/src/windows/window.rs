@@ -92,7 +92,7 @@ impl Window {
     ///
     /// But for 2w3d, it does not make sense to start it on a different lower bound, so we start at `t`
     pub fn get_earliest_bounds_ns(&self, t: i64) -> Bounds {
-        let start = if (!self.every.months_only() || !self.every.quarters_only())
+        let start = if (!self.every.months_only())
             && self.every.duration_ns() > NANOSECONDS * SECONDS_IN_DAY
         {
             self.offset.add_ns(t)
@@ -107,7 +107,7 @@ impl Window {
     }
 
     pub fn get_earliest_bounds_us(&self, t: i64) -> Bounds {
-        let start = if (!self.every.months_only() || !self.every.quarters_only())
+        let start = if (!self.every.months_only())
             && self.every.duration_us() > MICROSECONDS * SECONDS_IN_DAY
         {
             self.offset.add_us(t)
@@ -120,7 +120,7 @@ impl Window {
     }
 
     pub fn get_earliest_bounds_ms(&self, t: i64) -> Bounds {
-        let start = if (!self.every.months_only() || !self.every.quarters_only())
+        let start = if (!self.every.months_only())
             && self.every.duration_ms() > MILLISECONDS * SECONDS_IN_DAY
         {
             self.offset.add_ms(t)
