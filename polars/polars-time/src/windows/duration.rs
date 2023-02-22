@@ -21,6 +21,8 @@ use super::calendar::{
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Duration {
+    // the number of quarters for the duration
+    quarters: i64,
     // the number of months for the duration
     months: i64,
     // the number of weeks for the duration
@@ -49,6 +51,7 @@ impl Duration {
     /// Create a new integer size `Duration`
     pub fn new(fixed_slots: i64) -> Self {
         Duration {
+            quarters: 0,
             months: 0,
             weeks: 0,
             nsecs: fixed_slots.abs(),
@@ -66,6 +69,7 @@ impl Duration {
     /// 1d  // 1 day
     /// 1w  // 1 week
     /// 1mo // 1 calendar month
+    /// 1q  // 1 calendar quarter
     /// 1y  // 1 calendar year
     /// 1i  // 1 index value (only for {Int32, Int64} dtypes
     ///
@@ -84,6 +88,7 @@ impl Duration {
         let mut nsecs = 0;
         let mut weeks = 0;
         let mut months = 0;
+        let mut quarters = 0;
         let mut iter = duration.char_indices();
         let negative = duration.starts_with('-');
         let mut start = 0;
@@ -131,6 +136,7 @@ impl Duration {
                     "d" => nsecs += n * NS_DAY,
                     "w" => weeks += n,
                     "mo" => months += n,
+                    "q" => quarters += n,
                     "y" => months += n * 12,
                     // we will read indexes as nanoseconds
                     "i" => {
@@ -146,6 +152,7 @@ impl Duration {
             nsecs: nsecs.abs(),
             weeks: weeks.abs(),
             months: months.abs(),
+            quarters: quarters.abs(),
             negative,
             parsed_int,
         }
@@ -180,6 +187,14 @@ impl Duration {
                 _ => {}
             }
             Duration::from_weeks(weeks)
+        } else if self.quarters_only() && interval.quarters_only() {
+            let mut quarters = self.quarters() % interval.quarters();
+
+            match (self.negative, interval.negative) {
+                (true, true) | (true, false) => quarters = -quarters + interval.quarters(),
+                _ => {}
+            }
+            Duration::from_quarters(quarters)
         } else {
             let mut offset = self.duration_ns();
             if offset == 0 {
@@ -200,6 +215,7 @@ impl Duration {
     pub(crate) fn from_nsecs(v: i64) -> Self {
         let (negative, nsecs) = Self::to_positive(v);
         Self {
+            quarters: 0,
             months: 0,
             weeks: 0,
             nsecs,
@@ -212,6 +228,7 @@ impl Duration {
     pub(crate) fn from_months(v: i64) -> Self {
         let (negative, months) = Self::to_positive(v);
         Self {
+            quarters: 0,
             months,
             weeks: 0,
             nsecs: 0,
@@ -224,6 +241,7 @@ impl Duration {
     pub(crate) fn from_weeks(v: i64) -> Self {
         let (negative, weeks) = Self::to_positive(v);
         Self {
+            quarters: 0,
             months: 0,
             weeks,
             nsecs: 0,
@@ -232,13 +250,34 @@ impl Duration {
         }
     }
 
+    /// Creates a [`Duration`] that represents a fixed number of quarters.
+    pub(crate) fn from_quarters(v: i64) -> Self {
+        let (negative, quarters) = Self::to_positive(v);
+        Self {
+            quarters,
+            months: 0,
+            weeks: 0,
+            nsecs: 0,
+            negative,
+            parsed_int: false,
+        }
+    }
+
     /// `true` if zero duration.
     pub fn is_zero(&self) -> bool {
-        self.months == 0 && self.weeks == 0 && self.nsecs == 0
+        self.quarters == 0 && self.months == 0 && self.weeks == 0 && self.nsecs == 0
+    }
+
+    pub fn quarters_only(&self) -> bool {
+        self.quarters != 0 && self.months == 0 && self.weeks == 0 && self.nsecs == 0
+    }
+
+    pub fn quarters(&self) -> i64 {
+        self.quarters
     }
 
     pub fn months_only(&self) -> bool {
-        self.months != 0 && self.weeks == 0 && self.nsecs == 0
+        self.quarters == 0 && self.months != 0 && self.weeks == 0 && self.nsecs == 0
     }
 
     pub fn months(&self) -> i64 {
@@ -246,7 +285,7 @@ impl Duration {
     }
 
     pub fn weeks_only(&self) -> bool {
-        self.months == 0 && self.weeks != 0 && self.nsecs == 0
+        self.quarters == 0 && self.months == 0 && self.weeks != 0 && self.nsecs == 0
     }
 
     pub fn weeks(&self) -> i64 {
@@ -262,20 +301,28 @@ impl Duration {
     #[cfg(feature = "private")]
     #[doc(hidden)]
     pub const fn duration_ns(&self) -> i64 {
-        self.months * 28 * 24 * 3600 * NANOSECONDS + self.weeks * NS_WEEK + self.nsecs
+        self.quarters * 3 * 28 * 24 * 3600 * NANOSECONDS
+            + self.months * 28 * 24 * 3600 * NANOSECONDS
+            + self.weeks * NS_WEEK
+            + self.nsecs
     }
 
     #[cfg(feature = "private")]
     #[doc(hidden)]
     pub const fn duration_us(&self) -> i64 {
-        self.months * 28 * 24 * 3600 * MICROSECONDS + (self.weeks * NS_WEEK + self.nsecs) / 1000
+        (self.quarters * 3 * 28 * 24 * 3600 * MICROSECONDS
+            + self.months * 28 * 24 * 3600 * MICROSECONDS
+            + (self.weeks * NS_WEEK + self.nsecs))
+            / 1000
     }
 
     #[cfg(feature = "private")]
     #[doc(hidden)]
     pub const fn duration_ms(&self) -> i64 {
-        self.months * 28 * 24 * 3600 * MILLISECONDS
-            + (self.weeks * NS_WEEK + self.nsecs) / 1_000_000
+        (self.quarters * 3 * 28 * 24 * 3600 * MILLISECONDS
+            + self.months * 28 * 24 * 3600 * MILLISECONDS
+            + (self.weeks * NS_WEEK + self.nsecs))
+            / 1_000_000
     }
 
     #[inline]
@@ -291,10 +338,10 @@ impl Duration {
         G: Fn(i64) -> NaiveDateTime,
         J: Fn(NaiveDateTime) -> i64,
     {
-        match (self.months, self.weeks, self.nsecs) {
-            (0, 0, 0) => panic!("duration may not be zero"),
+        match (self.quarters, self.months, self.weeks, self.nsecs) {
+            (0, 0, 0, 0) => panic!("duration may not be zero"),
             // truncate by ns/us/ms
-            (0, 0, _) => {
+            (0, 0, 0, _) => {
                 let duration = nsecs_to_unit(self.nsecs);
                 let mut remainder = t % duration;
                 if remainder < 0 {
@@ -303,7 +350,7 @@ impl Duration {
                 t - remainder
             }
             // truncate by weeks
-            (0, _, 0) => {
+            (0, 0, _, 0) => {
                 let dt = timestamp_to_datetime(t).date();
                 let week_timestamp = dt.week(Weekday::Mon);
                 let first_day_of_week =
@@ -312,7 +359,7 @@ impl Duration {
                 datetime_to_timestamp(first_day_of_week.and_time(NaiveTime::default()))
             }
             // truncate by months
-            (_, 0, 0) => {
+            (0, _, 0, 0) => {
                 let ts = timestamp_to_datetime(t);
                 let (year, month) = (ts.year(), ts.month());
 
@@ -328,7 +375,18 @@ impl Duration {
                 let dt = new_datetime(year, month, 1, 0, 0, 0, 0);
                 datetime_to_timestamp(dt)
             }
-            _ => panic!("duration may not mix month, weeks and nanosecond units"),
+            (_, 0, 0, 0) => {
+                let ts = timestamp_to_datetime(t);
+                let (year, month) = (ts.year(), ts.month());
+                let mut total = (year * 12) + (month as i32 - 1);
+                let remainder = total % (self.quarters * 3) as i32;
+                total -= remainder;
+
+                let (year, month) = ((total / 12), ((total % 12) + 1) as u32);
+                let dt = new_datetime(year, month, 1, 0, 0, 0, 0);
+                datetime_to_timestamp(dt)
+            }
+            _ => panic!("duration may not mix quarters, month, weeks and nanosecond units"),
         }
     }
 
@@ -379,6 +437,46 @@ impl Duration {
     {
         let d = self;
         let mut new_t = t;
+
+        if d.quarters > 0 {
+            let mut quarters = d.quarters;
+            if d.negative {
+                quarters = -quarters;
+            }
+            let ts = timestamp_to_datetime(t);
+            let mut year = ts.year();
+            let mut month = ts.month() as i32;
+            let mut day = ts.day();
+            year += (quarters / 4) as i32;
+            month += ((quarters * 3) % 12) as i32;
+
+            // if the month overflowed or underflowed, adjust the year
+            // accordingly. Because we add the modulo for the months
+            // the year will only adjust by one
+            if month > 12 {
+                year += 1;
+                month -= 12;
+            } else if month <= 0 {
+                year -= 1;
+                month += 12;
+            }
+
+            // Normalize the day if we are past the end of the month.
+            let last_day_of_quarter = last_day_of_month(month);
+
+            if day > last_day_of_quarter {
+                day = last_day_of_quarter
+            }
+
+            // Retrieve the original time and construct a data
+            // with the new year, month and day
+            let hour = ts.hour();
+            let minute = ts.minute();
+            let sec = ts.second();
+            let nsec = ts.nanosecond();
+            let dt = new_datetime(year, month as u32, day, hour, minute, sec, nsec);
+            new_t = datetime_to_timestamp(dt);
+        }
 
         if d.months > 0 {
             let mut months = d.months;
@@ -479,6 +577,7 @@ impl Mul<i64> for Duration {
             rhs = -rhs;
             self.negative = !self.negative
         }
+        self.quarters *= rhs;
         self.months *= rhs;
         self.weeks *= rhs;
         self.nsecs *= rhs;
@@ -520,6 +619,8 @@ mod test {
         assert!(out.negative);
         let out = Duration::parse("5w");
         assert_eq!(out.weeks(), 5);
+        let out = Duration::parse("6q");
+        assert_eq!(out.quarters(), 6);
     }
 
     #[test]

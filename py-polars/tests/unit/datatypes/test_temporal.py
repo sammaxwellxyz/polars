@@ -2379,3 +2379,53 @@ def test_series_is_temporal() -> None:
     s = pl.Series([datetime(2023, 2, 14, 11, 12, 13)], dtype=pl.Datetime)
     for tp in (pl.Datetime, [pl.Datetime], [pl.Time, pl.Datetime]):  # type: ignore[assignment]
         assert s.is_temporal(excluding=tp) is False
+
+
+def test_groupby_dynamic() -> None:
+    dts = [
+        datetime(2021, 12, 31, 0, 0, 0),  # 2021Q4
+        datetime(2022, 1, 1, 0, 0, 1),  # 2022Q1
+        datetime(2022, 1, 1, 0, 0, 2),  # 2022Q1
+        datetime(2022, 1, 2, 0, 0, 2),  # 2022Q1
+        datetime(2022, 3, 31, 0, 0, 1),  # 2022Q2
+        datetime(2022, 4, 1, 0, 0, 1),  # 2022Q2
+        datetime(2022, 4, 15, 0, 0, 1),  # 2022Q2
+        datetime(2022, 4, 30, 0, 0, 1),  # 2022Q2
+        datetime(2022, 7, 30, 0, 0, 1),  # 2022Q3
+    ]
+    df = pl.DataFrame({"dt": dts})
+
+    # group by every quarter
+    assert (
+        df.groupby_dynamic("dt", every="1q").agg(
+            pl.col("dt").agg_groups().alias("grouped_indices")
+        )
+    ).to_dict(False) == {
+        "dt": [
+            datetime(2021, 10, 1),
+            datetime(2022, 1, 1),
+            datetime(2022, 4, 1),
+            datetime(2022, 7, 1),
+        ],
+        "grouped_indices": [[0], [1, 2, 3, 4], [5, 6, 7], [8]],
+    }
+
+    # group by every 2 quarters
+    assert (
+        df.groupby_dynamic("dt", every="2q").agg(
+            pl.col("dt").agg_groups().alias("grouped_indices")
+        )
+    ).to_dict(False) == {
+        "dt": [datetime(2021, 7, 1), datetime(2022, 1, 1), datetime(2022, 7, 1)],
+        "grouped_indices": [[0], [1, 2, 3, 4, 5, 6, 7], [8]],
+    }
+
+    # group by every 3 quarters
+    assert (
+        df.groupby_dynamic("dt", every="3q").agg(
+            pl.col("dt").agg_groups().alias("grouped_indices")
+        )
+    ).to_dict(False) == {
+        "dt": [datetime(2021, 4, 1), datetime(2022, 1, 1)],
+        "grouped_indices": [[0], [1, 2, 3, 4, 5, 6, 7, 8]],
+    }
