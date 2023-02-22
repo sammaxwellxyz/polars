@@ -2429,3 +2429,13 @@ def test_groupby_dynamic() -> None:
         "dt": [datetime(2021, 4, 1), datetime(2022, 1, 1)],
         "grouped_indices": [[0], [1, 2, 3, 4, 5, 6, 7, 8]],
     }
+
+    # group by every 2 quarters for a period of 3
+    assert (
+        df.groupby_dynamic("dt", every="2q", period="3q").agg(
+            pl.col("dt").agg_groups().alias("grouped_indices")
+        )
+    ).to_dict(False) == {
+        "dt": [datetime(2021, 7, 1), datetime(2022, 1, 1), datetime(2022, 7, 1)],
+        "grouped_indices": [[0, 1, 2, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8], [8]],
+    }
